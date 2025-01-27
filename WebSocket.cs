@@ -18,6 +18,7 @@ using System.Runtime.InteropServices;
 using Microsoft.Extensions.Logging;
 using net.vieapps.Components.WebSockets.Exceptions;
 using net.vieapps.Components.Utility;
+using System.Buffers;
 #endregion
 
 #if !SIGN
@@ -128,12 +129,12 @@ namespace net.vieapps.Components.WebSockets
 		/// <summary>
 		/// Event to fire when a message is received
 		/// </summary>
-		public event Action<ManagedWebSocket, WebSocketReceiveResult, byte[]> MessageReceivedHandler;
+		public event Action<ManagedWebSocket, WebSocketReceiveResult, ArraySegment<byte>> MessageReceivedHandler;
 
 		/// <summary>
 		/// Gets or Sets the action to run when a message is received
 		/// </summary>
-		public Action<ManagedWebSocket, WebSocketReceiveResult, byte[]> OnMessageReceived
+		public Action<ManagedWebSocket, WebSocketReceiveResult, ArraySegment<byte>> OnMessageReceived
 		{
 			set => this.MessageReceivedHandler += value;
 			get => this.MessageReceivedHandler;
@@ -978,7 +979,11 @@ namespace net.vieapps.Components.WebSockets
 						this._logger.Log(LogLevel.Debug, $"A message was received - Type: {result.MessageType} - EoM: {result.EndOfMessage} - Length: {result.Count:#,##0} ({websocket.ID} @ {websocket.RemoteEndPoint})");
 					try
 					{
-						this.MessageReceivedHandler?.Invoke(websocket, result, buffer.Take(result.Count));
+						var arrayPool = ArrayPool<byte>.Shared.Rent(result.Count);
+						var resultBuffer = new ArraySegment<byte>(arrayPool, 0, result.Count);
+                        Buffer.BlockCopy(buffer.Array, buffer.Offset, resultBuffer.Array, 0, result.Count);
+						this.MessageReceivedHandler?.Invoke(websocket, result, resultBuffer);
+                        ArrayPool<byte>.Shared.Return(arrayPool);
 					}
 					catch (Exception ex)
 					{
@@ -1402,8 +1407,10 @@ namespace net.vieapps.Components.WebSockets
 		/// <returns></returns>
 		public async Task SendAsync(ArraySegment<byte> message, CancellationToken cancellationToken = default)
 		{
-			var messages = message.Split(WebSocketHelper.ReceiveBufferSize);
-			await messages.ForEachAsync((msg, index) => this.SendAsync(msg, index == messages.Count - 1, cancellationToken), true, false).ConfigureAwait(false);
+			// as we are using this for game server so we don't need to split messages as it is just one message [MTU mostly 1500 bytes]
+            await this.SendAsync(message, true, cancellationToken).ConfigureAwait(false);
+            //var messages = message.Split(WebSocketHelper.ReceiveBufferSize);
+			//await messages.ForEachAsync((msg, index) => this.SendAsync(msg, index == messages.Count - 1, cancellationToken), true, false).ConfigureAwait(false);
 		}
 
 		/// <summary>
@@ -1577,21 +1584,20 @@ namespace net.vieapps.Components.WebSockets
 		/// <param name="key"></param>
 		/// <param name="value"></param>
 		/// <returns></returns>
-		public bool Remove<T>(string key, out T value)
-		{
-			if (this.Extra.Remove(key, out var val) && val is T valueIsT)
-			{
-				value = valueIsT;
-				return true;
-			}
-			value = default;
-			return false;
-		}
-
-		/// <summary>
-		/// Gets the header information of the <see cref="ManagedWebSocket">WebSocket</see> connection
-		/// </summary>
-		public Dictionary<string, string> Headers => this.Get("Headers", new Dictionary<string, string>());
+        public bool Remove<T>(string key, out T value)
+        {
+            if (System.Collections.Generic.CollectionExtensions.Remove(this.Extra, key, out var val) && val is T valueIsT)
+            {
+                value = valueIsT;
+                return true;
+            }
+            value = default;
+            return false;
+        }
+        /// <summary>
+        /// Gets the header information of the <see cref="ManagedWebSocket">WebSocket</see> connection
+        /// </summary>
+        public Dictionary<string, string> Headers => this.Get("Headers", new Dictionary<string, string>());
 		#endregion
 
 	}

@@ -96,8 +96,15 @@ namespace net.vieapps.Components.WebSockets
 				throw new ObjectDisposedException($"WebSocketImplementation => {this.ID}");
 			}
 
-			// add into queue and check pending operations
-			this._buffers.Enqueue(stream.ToArraySegment());
+            var data = System.Buffers.ArrayPool<byte>.Shared.Rent((int)stream.Length);
+            bool result = stream.TryGetBuffer(out ArraySegment<byte> _buffer);
+            if (result)
+            {
+                Buffer.BlockCopy(_buffer.Array, _buffer.Offset, data, 0, (int)stream.Length);
+            }
+			var dataSegment = new ArraySegment<byte>(data, 0, (int)stream.Length);
+            // add into queue and check pending operations
+            this._buffers.Enqueue(dataSegment);
 			if (this._pending)
 			{
 				Events.Log.PendingOperations(this.ID);
@@ -113,7 +120,11 @@ namespace net.vieapps.Components.WebSockets
 			{
 				while (!this._buffers.IsEmpty)
 					if (this._buffers.TryDequeue(out var buffer))
-						await this._stream.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
+					{
+                        await this._stream.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
+						System.Buffers.ArrayPool<byte>.Shared.Return(buffer.Array);
+                    }
+						
 			}
 			catch (Exception)
 			{

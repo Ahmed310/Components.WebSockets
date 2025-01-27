@@ -10,6 +10,7 @@ using System.Runtime.InteropServices;
 using Microsoft.IO;
 using net.vieapps.Components.Utility;
 using net.vieapps.Components.WebSockets.Exceptions;
+using System.Buffers;
 #endregion
 
 namespace net.vieapps.Components.WebSockets
@@ -54,7 +55,7 @@ namespace net.vieapps.Components.WebSockets
 		/// <returns>The HTTP header</returns>
 		public static async ValueTask<string> ReadHeaderAsync(this Stream stream, CancellationToken cancellationToken = default)
 		{
-			var buffer = new byte[WebSocketHelper.ReceiveBufferSize];
+			var buffer = ArrayPool<byte>.Shared.Rent(WebSocketHelper.ReceiveBufferSize); 
 			var offset = 0;
 			int read;
 			do
@@ -69,7 +70,7 @@ namespace net.vieapps.Components.WebSockets
 #endif
 				offset += read;
 				var header = buffer.GetString(offset);
-
+				ArrayPool<byte>.Shared.Return(buffer);
 				// as per specs, all headers should end like this
 				if (header.Contains("\r\n\r\n"))
 					return header;

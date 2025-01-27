@@ -1,5 +1,6 @@
 ﻿#region Related components
 using System;
+using System.Collections.Concurrent;
 using System.IO;
 using System.Net.WebSockets;
 using System.Text;
@@ -281,5 +282,72 @@ namespace net.vieapps.Components.WebSockets
 
 			stream.Write(payload.Array, payload.Offset, payload.Count);
 		}
-	}
+    }
+
+
+	internal class ObjectPool<T> where T : class
+    {
+        private readonly ConcurrentQueue<T> pool;
+        private readonly int maxPoolSize;
+        private readonly Func<T> objectFactory;
+
+        public ObjectPool(Func<T> objectFactory, int initialCapacity = 10, int maxPoolSize = 100)
+        {
+            if (objectFactory == null) throw new ArgumentNullException(nameof(objectFactory));
+
+            this.objectFactory = objectFactory;
+            this.maxPoolSize = maxPoolSize;
+            pool = new ConcurrentQueue<T>();
+
+            for (int i = 0; i < initialCapacity; i++)
+            {
+                pool.Enqueue(objectFactory());
+            }
+        }
+
+        /// <summary>
+        /// Get an object from the pool. Creates a new one if the pool is empty.
+        /// </summary>
+        public T Rent()
+        {
+            if (pool.TryDequeue(out var obj))
+            {
+                return obj;
+            }
+
+            return objectFactory();
+        }
+
+        /// <summary>
+        /// Return an object to the pool for reuse.
+        /// </summary>
+        public void Return(T obj)
+        {
+            if (obj == null) throw new ArgumentNullException(nameof(obj));
+
+            if (pool.Count < maxPoolSize)
+            {
+                pool.Enqueue(obj);
+            }
+        }
+
+        /// <summary>
+        /// Get the current size of the pool.
+        /// </summary>
+        public int PoolSize => pool.Count;
+    }
+
+	internal class SendData
+	{
+        public SendData( ArraySegment<byte> buffer, WebSocketMessageType messageType, bool endOfMessage)
+        {
+            Buffer = buffer;
+            MessageType = messageType;
+            EndOfMessage = endOfMessage;
+        }
+        public ArraySegment<byte> Buffer;
+		public WebSocketMessageType MessageType;
+		public bool EndOfMessage; 
+    }
+
 }

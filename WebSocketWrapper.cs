@@ -17,15 +17,16 @@ namespace net.vieapps.Components.WebSockets
 
 		#region Properties
 		readonly System.Net.WebSockets.WebSocket _websocket = null;
-		readonly ConcurrentQueue<Tuple<ArraySegment<byte>, WebSocketMessageType, bool>> _buffers = new ConcurrentQueue<Tuple<ArraySegment<byte>, WebSocketMessageType, bool>>();
+		readonly ConcurrentQueue<SendData> _buffers = new ConcurrentQueue<SendData>();
+        readonly ObjectPool<SendData> sendBufferPool = new ObjectPool<SendData>(() => new SendData(new ArraySegment<byte>(), WebSocketMessageType.Binary, false), 128, 512);
 		readonly SemaphoreSlim _lock = new SemaphoreSlim(1, 1);
 		readonly ILogger _logger;
 		bool _pending = false;
 
-		/// <summary>
-		/// Gets the state that indicates the reason why the remote endpoint initiated the close handshake
-		/// </summary>
-		public override WebSocketCloseStatus? CloseStatus => this._websocket.CloseStatus;
+        /// <summary>
+        /// Gets the state that indicates the reason why the remote endpoint initiated the close handshake
+        /// </summary>
+        public override WebSocketCloseStatus? CloseStatus => this._websocket.CloseStatus;
 
 		/// <summary>
 		/// Gets the description to describe the reason why the connection was closed
@@ -85,9 +86,12 @@ namespace net.vieapps.Components.WebSockets
 					this._logger.LogWarning($"Object disposed => {this.ID}");
 				throw new ObjectDisposedException($"WebSocketWrapper => {this.ID}");
 			}
-
+			var sendBuffer = sendBufferPool.Rent();
+            sendBuffer.Buffer = buffer;
+            sendBuffer.MessageType = messageType;
+            sendBuffer.EndOfMessage = endOfMessage;
 			// add into queue and check pending operations
-			this._buffers.Enqueue(new Tuple<ArraySegment<byte>, WebSocketMessageType, bool>(buffer, messageType, endOfMessage));
+			this._buffers.Enqueue(sendBuffer);
 			if (this._pending)
 			{
 				Events.Log.PendingOperations(this.ID);
@@ -103,7 +107,11 @@ namespace net.vieapps.Components.WebSockets
 			{
 				while (this.State == WebSocketState.Open && !this._buffers.IsEmpty)
 					if (this._buffers.TryDequeue(out var data))
-						await this._websocket.SendAsync(buffer: data.Item1, messageType: data.Item2, endOfMessage: data.Item3, cancellationToken: cancellationToken).ConfigureAwait(false);
+					{
+                        await this._websocket.SendAsync(buffer: data.Buffer, messageType: data.MessageType, endOfMessage: data.EndOfMessage, cancellationToken: cancellationToken).ConfigureAwait(false);
+                        sendBufferPool.Return(data);
+					}
+						
 			}
 			catch (Exception)
 			{
