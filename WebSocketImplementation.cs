@@ -192,11 +192,13 @@ namespace net.vieapps.Components.WebSockets
 								return await this.RespondToCloseFrameAsync(frame, buffer, cts.Token).ConfigureAwait(false);
 
 							case WebSocketOpCode.Ping:
-								await this._pingpongManager.SendPongAsync(buffer.Take(frame.Count).ToArray()).ConfigureAwait(false);
+								if(frame.Count > 0)
+									await this._pingpongManager.SendPongAsync(buffer.Take(frame.Count).ToArray()).ConfigureAwait(false);
 								break;
 
 							case WebSocketOpCode.Pong:
-								this._pingpongManager.OnPong(buffer.Take(frame.Count).ToArray());
+                                if (frame.Count > 0)
+                                    this._pingpongManager.OnPong(buffer.Take(frame.Count).ToArray());
 								break;
 
 							case WebSocketOpCode.Text:
